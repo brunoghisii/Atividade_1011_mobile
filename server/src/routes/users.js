@@ -79,7 +79,7 @@ r.patch(
         targetId
       );
     }
-    if (b.password || b.active === false || b.role) revokeAllSessions(targetId);
+    if (b.password || b.active === false || b.role) revokeAllSessions("staff", targetId);
     audit(req, "update", "user", targetId);
     res.json(db.prepare(`SELECT ${COLS} FROM users WHERE id = ?`).get(targetId));
   }

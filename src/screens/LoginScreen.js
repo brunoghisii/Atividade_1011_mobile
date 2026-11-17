@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { KeyboardAvoidingView, Platform, StyleSheet, View } from "react-native";
-import { Button, Text, TextInput, useTheme } from "react-native-paper";
+import { Button, SegmentedButtons, Text, TextInput, useTheme } from "react-native-paper";
 import { login, errorMessage } from "../api";
 import { isEmail } from "../validation";
 import { Field } from "../ui";
 
 export default function LoginScreen({ onLogged }) {
   const theme = useTheme();
+  const [kind, setKind] = useState("patient");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
@@ -23,7 +24,7 @@ export default function LoginScreen({ onLogged }) {
     setBusy(true);
     setError("");
     try {
-      const user = await login(email.trim().toLowerCase(), password);
+      const user = await login(email.trim().toLowerCase(), password, kind);
       setPassword("");
       onLogged(user);
     } catch (e) {
@@ -43,8 +44,17 @@ export default function LoginScreen({ onLogged }) {
           Consultório
         </Text>
         <Text variant="bodyMedium" style={{ textAlign: "center", marginBottom: 16 }}>
-          Acesse com seu usuário da clínica
+          Fisioterapia e saúde
         </Text>
+        <SegmentedButtons
+          value={kind}
+          onValueChange={(v) => !busy && (setKind(v), setError(""))}
+          buttons={[
+            { value: "patient", label: "Sou paciente", icon: "account-heart" },
+            { value: "staff", label: "Sou da clínica", icon: "stethoscope" },
+          ]}
+          style={{ marginBottom: 8 }}
+        />
         <Field
           label="E-mail"
           value={email}
@@ -72,6 +82,11 @@ export default function LoginScreen({ onLogged }) {
         <Button mode="contained" onPress={submit} loading={busy} disabled={busy} style={{ marginTop: 16 }}>
           Entrar
         </Button>
+        {kind === "patient" && (
+          <Text variant="bodySmall" style={{ textAlign: "center", marginTop: 12 }}>
+            Ainda não tem acesso? Peça à recepção da clínica.
+          </Text>
+        )}
       </View>
     </KeyboardAvoidingView>
   );

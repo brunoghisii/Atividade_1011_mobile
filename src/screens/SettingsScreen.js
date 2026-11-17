@@ -7,7 +7,7 @@ import { ROLES } from "../format";
 import { Field, useSubmit, useUi } from "../ui";
 import { isEmail, passwordProblems } from "../validation";
 
-function PasswordDialog({ visible, onDismiss }) {
+export function PasswordDialog({ visible, onDismiss }) {
   const { notify } = useUi();
   const [busy, run] = useSubmit();
   const [cur, setCur] = useState("");

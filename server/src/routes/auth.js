@@ -25,22 +25,22 @@ r.post(
   }),
   async (req, res) => {
     const { email, password: pwd } = req.valid.body;
-    const user = await verifyLogin(email, pwd);
+    const user = await verifyLogin("staff", email, pwd);
     req.user = user;
     audit(req, "login");
-    res.json({ user: publicUser(user), ...issueTokens(user) });
+    res.json({ user: publicUser(user), ...issueTokens("staff", user) });
   }
 );
 
 const refreshBody = z.strictObject({ refreshToken: z.string().min(20).max(200) });
 
 r.post("/refresh", loginLimiter, validate({ body: refreshBody }), (req, res) => {
-  const { user, tokens } = rotateRefreshToken(req.valid.body.refreshToken);
+  const { user, tokens } = rotateRefreshToken("staff", req.valid.body.refreshToken);
   res.json({ user: publicUser(user), ...tokens });
 });
 
 r.post("/logout", validate({ body: refreshBody }), (req, res) => {
-  revokeRefreshToken(req.valid.body.refreshToken);
+  revokeRefreshToken("staff", req.valid.body.refreshToken);
   res.status(204).end();
 });
 
@@ -60,10 +60,10 @@ r.post(
       await hashPassword(req.valid.body.newPassword),
       req.user.id
     );
-    revokeAllSessions(req.user.id); // derruba as outras sessões
+    revokeAllSessions("staff", req.user.id); // derruba as outras sessões
     audit(req, "change_password", "user", req.user.id);
     const user = db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id);
-    res.json({ user: publicUser(user), ...issueTokens(user) });
+    res.json({ user: publicUser(user), ...issueTokens("staff", user) });
   }
 );
 

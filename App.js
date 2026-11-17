@@ -13,6 +13,18 @@ import LoginScreen from "./src/screens/LoginScreen";
 import AgendaScreen from "./src/screens/AgendaScreen";
 import PatientsScreen from "./src/screens/PatientsScreen";
 import SettingsScreen from "./src/screens/SettingsScreen";
+import PortalHome from "./src/screens/portal/PortalHome";
+import PortalBook from "./src/screens/portal/PortalBook";
+import PortalHistory from "./src/screens/portal/PortalHistory";
+import PortalAccount from "./src/screens/portal/PortalAccount";
+import FirstAccess from "./src/screens/portal/FirstAccess";
+
+const PATIENT_ROUTES = [
+  { key: "home", title: "Início", focusedIcon: "home-heart", unfocusedIcon: "home-outline" },
+  { key: "book", title: "Agendar", focusedIcon: "calendar-plus", unfocusedIcon: "calendar-plus" },
+  { key: "history", title: "Sessões", focusedIcon: "history", unfocusedIcon: "history" },
+  { key: "account", title: "Conta", focusedIcon: "account-circle", unfocusedIcon: "account-circle-outline" },
+];
 
 const ROUTES = [
   { key: "agenda", title: "Agenda", focusedIcon: "calendar-month", unfocusedIcon: "calendar-month-outline" },
@@ -65,7 +77,22 @@ export default function App() {
       </View>
     );
   } else if (!user) {
-    content = <LoginScreen onLogged={setUser} />;
+    content = <LoginScreen onLogged={(u) => (setIndex(0), setUser(u))} />;
+  } else if (user.role === "paciente" && user.mustChangePassword) {
+    content = <FirstAccess onDone={setUser} />;
+  } else if (user.role === "paciente") {
+    content = (
+      <BottomNavigation
+        navigationState={{ index, routes: PATIENT_ROUTES }}
+        onIndexChange={setIndex}
+        renderScene={({ route }) => {
+          if (route.key === "home") return <PortalHome onBook={() => setIndex(1)} />;
+          if (route.key === "book") return <PortalBook onDone={() => setIndex(0)} />;
+          if (route.key === "history") return <PortalHistory />;
+          return <PortalAccount darkMode={darkMode} onToggleDark={toggleDark} />;
+        }}
+      />
+    );
   } else {
     content = (
       <BottomNavigation

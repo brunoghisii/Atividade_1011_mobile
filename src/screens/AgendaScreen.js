@@ -4,7 +4,7 @@ import { Appbar, Button, Card, Chip, Dialog, FAB, Menu, Portal, Text, useTheme }
 import { api, errorMessage } from "../api";
 import { useAuth } from "../auth";
 import { addDays, dateLabel, minToTime, money, PAYMENT, STATUS, todayIso } from "../format";
-import { useSubmit, useUi } from "../ui";
+import { Field, useSubmit, useUi } from "../ui";
 import AppointmentForm from "./AppointmentForm";
 import PatientDetail from "./PatientDetail";
 
@@ -36,6 +36,8 @@ export default function AgendaScreen() {
   const [form, setForm] = useState(null); // null | {} (novo) | appointment (editar)
   const [payFor, setPayFor] = useState(null);
   const [patientId, setPatientId] = useState(null);
+  const [guideFor, setGuideFor] = useState(null);
+  const [guide, setGuide] = useState("");
   const desk = user.role !== "profissional";
 
   const load = useCallback(async () => {
@@ -67,6 +69,15 @@ export default function AgendaScreen() {
     await run(async () => {
       await api(`/appointments/${a.id}/status`, { method: "PATCH", body: { status } });
       notify(`Status alterado para "${STATUS[status].label}"`);
+      await load();
+    });
+  }
+
+  async function saveGuidance() {
+    await run(async () => {
+      await api(`/appointments/${guideFor.id}/guidance`, { method: "PATCH", body: { patient_guidance: guide.trim() } });
+      setGuideFor(null);
+      notify("Orientação enviada ao app do paciente");
       await load();
     });
   }
@@ -140,7 +151,7 @@ export default function AgendaScreen() {
             <Card style={[styles.card, { borderLeftColor: st.color }]} onPress={() => setPatientId(a.patient_id)}>
               <Card.Title
                 title={`${minToTime(a.start_min)} · ${a.patient_name}`}
-                subtitle={`${a.professional_name} · ${a.duration_min} min${a.reason ? " · " + a.reason : ""}`}
+                subtitle={`${a.professional_name} · ${a.duration_min} min${a.plan_title ? " · " + a.plan_title : ""}${a.reason ? " · " + a.reason : ""}`}
                 right={() => (
                   <Menu
                     visible={menuFor === a.id}
@@ -154,6 +165,13 @@ export default function AgendaScreen() {
                     {actions.map(([s, label]) => (
                       <Menu.Item key={s} title={label} leadingIcon={STATUS[s].icon} onPress={() => changeStatus(a, s)} />
                     ))}
+                    {user.role === "profissional" && ["em_atendimento", "concluido"].includes(a.status) && (
+                      <Menu.Item
+                        title="Orientação ao paciente"
+                        leadingIcon="message-text"
+                        onPress={() => (setMenuFor(null), setGuide(a.patient_guidance ?? ""), setGuideFor(a))}
+                      />
+                    )}
                     {desk && !["concluido", "cancelado", "faltou"].includes(a.status) && (
                       <Menu.Item title="Remarcar / editar" leadingIcon="pencil" onPress={() => (setMenuFor(null), setForm(a))} />
                     )}
@@ -178,6 +196,8 @@ export default function AgendaScreen() {
                 <Chip compact icon={st.icon} textStyle={{ color: st.color }}>
                   {st.label}
                 </Chip>
+                {a.source === "paciente" && <Chip compact icon="cellphone">Agendado pelo app</Chip>}
+                {a.patient_guidance ? <Chip compact icon="message-check">Orientação enviada</Chip> : null}
                 {desk && a.price_cents > 0 && (
                   <Chip compact icon={a.paid ? "check-circle" : "cash-clock"}>
                     {money(a.price_cents)} {a.paid ? `· ${PAYMENT[a.payment_method] ?? "pago"}` : "· pendente"}
@@ -192,6 +212,17 @@ export default function AgendaScreen() {
       {desk && <FAB icon="plus" label="Agendar" style={styles.fab} onPress={() => setForm({})} />}
 
       <Portal>
+        <Dialog visible={!!guideFor} onDismiss={() => !busy && setGuideFor(null)}>
+          <Dialog.Title>Orientação para {guideFor?.patient_name}</Dialog.Title>
+          <Dialog.Content>
+            <Text variant="bodySmall">Aparece no app do paciente (exercícios para casa, cuidados). Não use para dados do prontuário.</Text>
+            <Field label="Orientação" value={guide} onChangeText={setGuide} multiline numberOfLines={5} maxLength={2000} disabled={busy} />
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button disabled={busy} onPress={() => setGuideFor(null)}>Cancelar</Button>
+            <Button disabled={busy} loading={busy} onPress={saveGuidance}>Enviar</Button>
+          </Dialog.Actions>
+        </Dialog>
         <Dialog visible={!!payFor} onDismiss={() => !busy && setPayFor(null)}>
           <Dialog.Title>Pagamento · {payFor && money(payFor.price_cents)}</Dialog.Title>
           <Dialog.Content style={styles.row}>

@@ -45,8 +45,13 @@ app.use((req, res, next) => {
 app.get("/health", (req, res) => res.json({ ok: true }));
 app.use("/auth", require("./routes/auth"));
 
-app.use(requireAuth); // tudo abaixo exige autenticação
+// Portal do paciente: autenticação própria (requirePatient) dentro do router
+app.use("/portal", require("./routes/portal"));
+
+app.use(requireAuth); // tudo abaixo exige autenticação da EQUIPE (token de paciente é rejeitado)
 app.use("/users", require("./routes/users"));
+app.use("/patients/:patientId/plans", require("./routes/plans").router);
+app.use("/patients/:patientId/portal-account", require("./routes/portalAccounts"));
 app.use("/patients/:patientId/records", require("./routes/records"));
 app.use("/patients/:patientId/attachments", require("./routes/attachments"));
 app.use("/patients", require("./routes/patients").router);

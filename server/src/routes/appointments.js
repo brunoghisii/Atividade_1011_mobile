@@ -23,8 +23,10 @@ const TRANSITIONS = {
 };
 
 const SELECT = `
-  SELECT a.*, p.name AS patient_name, p.phone AS patient_phone, u.name AS professional_name
+  SELECT a.*, p.name AS patient_name, p.phone AS patient_phone, u.name AS professional_name,
+         tp.title AS plan_title
   FROM appointments a
+  LEFT JOIN treatment_plans tp ON tp.id = a.plan_id
   JOIN patients p ON p.id = a.patient_id
   JOIN users u ON u.id = a.professional_id`;
 
@@ -39,6 +41,11 @@ function loadAppointment(req, apptId) {
 function assertProfessional(profId) {
   const u = db.prepare("SELECT id FROM users WHERE id = ? AND role = 'profissional' AND active = 1").get(profId);
   if (!u) throw new HttpError(400, "Profissional inválido");
+}
+
+function assertPlan(planId, patientId) {
+  const p = db.prepare("SELECT 1 FROM treatment_plans WHERE id = ? AND patient_id = ?").get(planId, patientId);
+  if (!p) throw new HttpError(400, "Plano de tratamento inválido para este paciente");
 }
 
 function assertSlotFree({ professional_id, patient_id, date: d, start_min, duration_min }, ignoreId = "") {
@@ -89,11 +96,13 @@ r.post(
       duration_min: z.number().int().min(10).max(240),
       reason: text(250).optional(),
       price_cents: money.optional(),
+      plan_id: id.optional(),
     }),
   }),
   (req, res) => {
     const b = req.valid.body;
     const patient = getPatient(b.patient_id);
+    if (b.plan_id) assertPlan(b.plan_id, b.patient_id);
     if (!patient.active) throw new HttpError(400, "Paciente inativo");
     assertProfessional(b.professional_id);
     const appt = { ...b, start_min: b.start };
@@ -101,10 +110,10 @@ r.post(
     transaction(() => {
       assertSlotFree(appt);
       db.prepare(
-        `INSERT INTO appointments (id, patient_id, professional_id, date, start_min, duration_min, reason, price_cents, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO appointments (id, patient_id, professional_id, date, start_min, duration_min, reason, price_cents, plan_id, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(apptId, b.patient_id, b.professional_id, b.date, b.start, b.duration_min, b.reason ?? null,
-        b.price_cents ?? 0, req.user.id);
+        b.price_cents ?? 0, b.plan_id ?? null, req.user.id);
     });
     audit(req, "create", "appointment", apptId);
     res.status(201).json(loadAppointment(req, apptId));
@@ -124,10 +133,12 @@ r.patch(
       duration_min: z.number().int().min(10).max(240).optional(),
       reason: text(250).optional(),
       price_cents: money.optional(),
+      plan_id: id.nullable().optional(),
     }),
   }),
   (req, res) => {
     const a = loadAppointment(req, req.valid.params.id);
+    if (req.valid.body.plan_id) assertPlan(req.valid.body.plan_id, a.patient_id);
     if (["concluido", "cancelado", "faltou"].includes(a.status)) {
       throw new HttpError(400, "Não é possível editar um agendamento finalizado");
     }
@@ -141,8 +152,8 @@ r.patch(
     transaction(() => {
       assertSlotFree(m, a.id);
       db.prepare(
-        "UPDATE appointments SET professional_id=?, date=?, start_min=?, duration_min=?, reason=?, price_cents=? WHERE id=?"
-      ).run(m.professional_id, m.date, m.start_min, m.duration_min, m.reason ?? null, m.price_cents, a.id);
+        "UPDATE appointments SET professional_id=?, date=?, start_min=?, duration_min=?, reason=?, price_cents=?, plan_id=? WHERE id=?"
+      ).run(m.professional_id, m.date, m.start_min, m.duration_min, m.reason ?? null, m.price_cents, m.plan_id ?? null, a.id);
     });
     audit(req, "update", "appointment", a.id);
     res.json(loadAppointment(req, a.id));
@@ -198,6 +209,23 @@ r.patch(
   }
 );
 
+// Orientação para o paciente (exercícios para casa, cuidados) — aparece no portal do paciente.
+// Só o profissional responsável pela sessão pode escrever.
+r.patch(
+  "/:id/guidance",
+  requireRole("profissional"),
+  validate({ params: z.strictObject({ id }), body: z.strictObject({ patient_guidance: text(2000) }) }),
+  (req, res) => {
+    const a = loadAppointment(req, req.valid.params.id);
+    if (!["em_atendimento", "concluido"].includes(a.status)) {
+      throw new HttpError(400, "Orientação só pode ser registrada após iniciar o atendimento");
+    }
+    db.prepare("UPDATE appointments SET patient_guidance = ? WHERE id = ?").run(req.valid.body.patient_guidance || null, a.id);
+    audit(req, "guidance", "appointment", a.id);
+    res.json(loadAppointment(req, a.id));
+  }
+);
+
 // Resumo do dia (painel da recepção / profissional)
 r.get("/summary/day", validate({ query: z.object({ date }) }), (req, res) => {
   const prof = req.user.role === "profissional" ? req.user.id : "";
@@ -224,3 +252,5 @@ r.get("/summary/day", validate({ query: z.object({ date }) }), (req, res) => {
 });
 
 module.exports = r;
+module.exports.assertSlotFree = assertSlotFree;
+module.exports.TRANSITIONS = TRANSITIONS;

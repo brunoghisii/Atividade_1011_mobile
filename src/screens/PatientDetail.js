@@ -8,6 +8,8 @@ import { age, dateLabel, isoToBr, minToTime, money, STATUS, todayIso } from "../
 import { Field, useSubmit, useUi } from "../ui";
 import { maskCpf, maskPhone } from "../validation";
 import PatientForm from "./PatientForm";
+import TreatmentTab from "./TreatmentTab";
+import PortalAccessCard from "./PortalAccessCard";
 
 const MAX_UPLOAD = 5 * 1024 * 1024;
 const ALLOWED = ["application/pdf", "image/png", "image/jpeg"];
@@ -94,8 +96,9 @@ export default function PatientDetail({ id, onBack }) {
 
   const tabs = [
     { value: "dados", label: "Dados" },
-    { value: "consultas", label: "Consultas" },
-    ...(clinical ? [{ value: "prontuario", label: "Prontuário" }] : []),
+    { value: "consultas", label: "Agenda" },
+    { value: "plano", label: "Plano" },
+    ...(clinical ? [{ value: "prontuario", label: "Pront." }] : []),
     { value: "anexos", label: "Anexos" },
   ];
 
@@ -122,6 +125,9 @@ export default function PatientDetail({ id, onBack }) {
             </Card.Content>
           </Card>
         )}
+        {tab === "dados" && patient && desk && <PortalAccessCard patient={patient} />}
+
+        {tab === "plano" && <TreatmentTab patientId={id} />}
 
         {tab === "consultas" &&
           (history.length === 0 ? (

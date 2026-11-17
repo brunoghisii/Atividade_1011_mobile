@@ -165,3 +165,94 @@ test("erros internos não vazam detalhes", async () => {
   const j = await bad.json();
   assert.deepEqual(j, { error: "JSON inválido" });
 });
+
+// ======================= Portal do paciente =======================
+function nextWeekday(daysAhead = 3) {
+  const d = new Date();
+  d.setDate(d.getDate() + daysAhead);
+  while ([0, 6].includes(d.getDay())) d.setDate(d.getDate() + 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+test("portal: recepção cria acesso, paciente é obrigado a trocar a senha provisória", async () => {
+  // plano de fisioterapia criado pelo profissional
+  let r = await api("POST", `/patients/${ids.patient}/plans`, { token: tokens.prof, body: { title: "Fisioterapia joelho", total_sessions: 10 } });
+  assert.equal(r.status, 201);
+  ids.plan = r.body.id;
+  r = await api("POST", `/patients/${ids.patient}/plans`, { token: tokens.recep, body: { title: "x plano", total_sessions: 3 } });
+  assert.equal(r.status, 403);
+
+  r = await api("POST", `/patients/${ids.patient}/portal-account`, { token: tokens.recep, body: { email: "maria@p.com", password: "Provisoria#1" } });
+  assert.equal(r.status, 201);
+  r = await api("POST", "/portal/auth/login", { body: { email: "maria@p.com", password: "Provisoria#1" } });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.user.mustChangePassword, true);
+  const temp = r.body.accessToken;
+  assert.equal((await api("GET", "/portal/appointments", { token: temp })).status, 403);
+  r = await api("POST", "/portal/auth/change-password", { token: temp, body: { currentPassword: "Provisoria#1", newPassword: "MinhaSenha#2026" } });
+  assert.equal(r.status, 200);
+  tokens.patient = r.body.accessToken;
+  assert.equal((await api("GET", "/portal/appointments", { token: temp })).status, 401); // token antigo revogado
+});
+
+test("portal: tokens de paciente e equipe não se misturam", async () => {
+  assert.equal((await api("GET", "/patients", { token: tokens.patient })).status, 401);
+  assert.equal((await api("GET", `/patients/${ids.patient}/records`, { token: tokens.patient })).status, 401);
+  assert.equal((await api("GET", "/portal/me", { token: tokens.recep })).status, 401);
+});
+
+test("portal: paciente vê progresso do plano sem dados internos nem prontuário", async () => {
+  const r = await api("GET", "/portal/plans", { token: tokens.patient });
+  assert.equal(r.status, 200);
+  assert.equal(r.body[0].title, "Fisioterapia joelho");
+  assert.equal(r.body[0].total_sessions, 10);
+  assert.equal(r.body[0].professional_id, undefined);
+  const a = await api("GET", "/portal/appointments", { token: tokens.patient });
+  assert.ok(!JSON.stringify(a.body).includes("Paciente estável")); // conteúdo do prontuário nunca vaza
+  assert.equal(a.body[0].price_cents, undefined);
+});
+
+test("portal: agenda em horário livre, vincula ao plano e respeita conflitos", async () => {
+  const date = nextWeekday();
+  let r = await api("GET", `/portal/availability?professionalId=${ids.prof}&date=${date}`, { token: tokens.patient });
+  assert.equal(r.status, 200);
+  assert.ok(r.body.slots.includes("09:00"));
+  r = await api("POST", "/portal/appointments", { token: tokens.patient, body: { professional_id: ids.prof, date, start: "09:00" } });
+  assert.equal(r.status, 201);
+  ids.portalAppt = r.body.id;
+  r = await api("GET", `/portal/availability?professionalId=${ids.prof}&date=${date}`, { token: tokens.patient });
+  assert.ok(!r.body.slots.includes("09:00"));
+  // fora da grade / tentar injetar patient_id de outro
+  r = await api("POST", "/portal/appointments", { token: tokens.patient, body: { professional_id: ids.prof, date, start: "09:30" } });
+  assert.equal(r.status, 400);
+  r = await api("POST", "/portal/appointments", { token: tokens.patient, body: { professional_id: ids.prof, date, start: "10:00", patient_id: ids.patient } });
+  assert.equal(r.status, 400);
+  // aparece na agenda da clínica, vinculada ao plano
+  r = await api("GET", `/appointments?date=${date}`, { token: tokens.recep });
+  const appt = r.body.find((x) => x.id === ids.portalAppt);
+  assert.equal(appt.source, "paciente");
+  assert.equal(appt.plan_id, ids.plan);
+});
+
+test("portal: paciente não acessa consulta de outro paciente (IDOR)", async () => {
+  // consulta de outro paciente
+  const other = await api("POST", "/patients", { token: tokens.recep, body: { name: "João Pereira", phone: "48988887777" } });
+  const a = await api("POST", "/appointments", { token: tokens.recep, body: { patient_id: other.body.id, professional_id: ids.prof2, date: nextWeekday(5), start: "15:00", duration_min: 60 } });
+  assert.equal(a.status, 201);
+  const r = await api("POST", `/portal/appointments/${a.body.id}/cancel`, { token: tokens.patient });
+  assert.equal(r.status, 404);
+});
+
+test("portal: paciente confirma, cancela e recebe orientação do profissional", async () => {
+  let r = await api("POST", `/portal/appointments/${ids.portalAppt}/confirm`, { token: tokens.patient });
+  assert.equal(r.status, 204);
+  r = await api("POST", `/portal/appointments/${ids.portalAppt}/cancel`, { token: tokens.patient });
+  assert.equal(r.status, 204);
+  // orientação na sessão concluída do primeiro teste
+  r = await api("PATCH", `/appointments/${ids.appt}/guidance`, { token: tokens.prof, body: { patient_guidance: "Gelo 20 min, 3x ao dia" } });
+  assert.equal(r.status, 200);
+  r = await api("PATCH", `/appointments/${ids.appt}/guidance`, { token: tokens.recep, body: { patient_guidance: "x" } });
+  assert.equal(r.status, 403);
+  r = await api("GET", "/portal/appointments", { token: tokens.patient });
+  assert.ok(r.body.some((x) => x.patient_guidance === "Gelo 20 min, 3x ao dia"));
+});

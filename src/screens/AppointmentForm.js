@@ -29,6 +29,16 @@ export default function AppointmentForm({ initial, date, onClose }) {
     price: maskMoney(String(initial.price_cents ?? 0)),
   });
   const [errors, setErrors] = useState({});
+  const [plans, setPlans] = useState([]);
+  const [planId, setPlanId] = useState(initial.plan_id ?? null);
+
+  // Planos ativos do paciente escolhido (para vincular a sessão ao tratamento)
+  useEffect(() => {
+    if (!patient) return setPlans([]);
+    api(`/patients/${patient.id}/plans`)
+      .then((l) => setPlans(l.filter((p) => p.status === "ativo")))
+      .catch(() => setPlans([]));
+  }, [patient]);
   const set = (k) => (v) => setF((s) => ({ ...s, [k]: v }));
 
   useEffect(() => {
@@ -74,6 +84,7 @@ export default function AppointmentForm({ initial, date, onClose }) {
         duration_min: f.duration_min,
         reason: f.reason.trim() || undefined,
         price_cents: moneyToCents(f.price),
+        ...(planId ? { plan_id: planId } : editing ? { plan_id: null } : {}),
       };
       const saved = editing
         ? await api(`/appointments/${initial.id}`, { method: "PATCH", body })
@@ -136,6 +147,21 @@ export default function AppointmentForm({ initial, date, onClose }) {
             </Chip>
           ))}
         </View>
+
+        {plans.length > 0 && (
+          <>
+            <Text variant="titleSmall" style={{ marginTop: 16 }}>Plano de tratamento</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+              <Chip selected={!planId} onPress={() => setPlanId(null)} disabled={busy}>Avulsa</Chip>
+              {plans.map((p) => (
+                <Chip key={p.id} selected={planId === p.id} disabled={busy}
+                  onPress={() => (setPlanId(p.id), p.professional_id && set("professional_id")(p.professional_id))}>
+                  {p.title} ({p.done_sessions}/{p.total_sessions})
+                </Chip>
+              ))}
+            </View>
+          </>
+        )}
 
         <Field label="Motivo / procedimento" value={f.reason} onChangeText={set("reason")} maxLength={250} disabled={busy} />
         <Field label="Valor (R$)" value={f.price} onChangeText={(v) => set("price")(maskMoney(v))} keyboardType="number-pad" disabled={busy} />

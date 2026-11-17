@@ -7,7 +7,10 @@ import * as SecureStore from "expo-secure-store";
 import { API_URL, REQUEST_TIMEOUT_MS } from "./config";
 
 const KEY = "consultorio.session";
-let session = null; // { accessToken, refreshToken, user }
+let session = null; // { kind: "staff" | "patient", accessToken, refreshToken, user }
+// Rotas de autenticação de cada área (equipe x paciente usam endpoints e tokens separados)
+const AUTH = { staff: "/auth", patient: "/portal/auth" };
+const authPath = (p) => `${AUTH[session?.kind ?? "staff"]}${p}`;
 let refreshing = null;
 let onSessionEnd = () => {};
 
@@ -27,6 +30,7 @@ export async function loadSession() {
   try {
     const raw = await SecureStore.getItemAsync(KEY);
     session = raw ? JSON.parse(raw) : null;
+    if (session && !session.kind) session.kind = "staff"; // sessões da versão anterior
   } catch {
     session = null;
   }
@@ -61,7 +65,7 @@ async function rawFetch(path, { method = "GET", body, token, isForm } = {}) {
   } catch (e) {
     if (e instanceof ApiError) throw e;
     if (e.name === "AbortError") throw new ApiError(0, "Servidor demorou para responder. Tente novamente.");
-    throw new ApiError(0, "Sem conexão com o servidor.");
+    throw new ApiError(0, `Sem conexão com o servidor (${API_URL}). Verifique se a API está rodando e na mesma rede.`);
   } finally {
     clearTimeout(timer);
   }
@@ -69,8 +73,8 @@ async function rawFetch(path, { method = "GET", body, token, isForm } = {}) {
 
 async function refresh() {
   if (!session?.refreshToken) throw new ApiError(401, "Sessão expirada");
-  refreshing ??= rawFetch("/auth/refresh", { method: "POST", body: { refreshToken: session.refreshToken } })
-    .then((d) => saveSession({ accessToken: d.accessToken, refreshToken: d.refreshToken, user: d.user }))
+  refreshing ??= rawFetch(authPath("/refresh"), { method: "POST", body: { refreshToken: session.refreshToken } })
+    .then((d) => saveSession({ kind: session.kind, accessToken: d.accessToken, refreshToken: d.refreshToken, user: d.user }))
     .finally(() => (refreshing = null));
   return refreshing;
 }
@@ -91,21 +95,22 @@ export async function api(path, opts = {}) {
   }
 }
 
-export async function login(email, password) {
-  const d = await rawFetch("/auth/login", { method: "POST", body: { email, password } });
-  await saveSession({ accessToken: d.accessToken, refreshToken: d.refreshToken, user: d.user });
+export async function login(email, password, kind = "staff") {
+  const d = await rawFetch(`${AUTH[kind]}/login`, { method: "POST", body: { email, password } });
+  await saveSession({ kind, accessToken: d.accessToken, refreshToken: d.refreshToken, user: d.user });
   return d.user;
 }
 
 export async function changePassword(currentPassword, newPassword) {
-  const d = await api("/auth/change-password", { method: "POST", body: { currentPassword, newPassword } });
-  await saveSession({ accessToken: d.accessToken, refreshToken: d.refreshToken, user: d.user });
+  const d = await api(authPath("/change-password"), { method: "POST", body: { currentPassword, newPassword } });
+  await saveSession({ kind: session.kind, accessToken: d.accessToken, refreshToken: d.refreshToken, user: d.user });
 }
 
 export async function logout() {
   const rt = session?.refreshToken;
+  const path = authPath("/logout");
   await saveSession(null);
-  if (rt) rawFetch("/auth/logout", { method: "POST", body: { refreshToken: rt } }).catch(() => {});
+  if (rt) rawFetch(path, { method: "POST", body: { refreshToken: rt } }).catch(() => {});
 }
 
 // Converte erro da API em texto para o usuário (inclui detalhes de validação do backend)
